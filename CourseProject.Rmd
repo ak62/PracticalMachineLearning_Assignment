@@ -1,0 +1,128 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Aman Karamlou"
+date: "March 10, 2019"
+output: html_document
+---
+
+## Summary
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants and predict the manner they did exercise (i.e., variable "classe" in the training and testing data sets).
+
+## Loading the Libraries
+The followings are the packages used for this exercise. 
+```{r, warning=FALSE, message=FALSE}
+library(data.table)
+library(ggplot2)
+library(caret)
+library(ISLR)
+library(rattle)
+library(parallel)
+library(doParallel)
+```
+
+## Loading and Cleaning the Data
+The data has already been partitioned into training and testing data sets and saved in csv formats.
+The following lines are to load the training and testing data sets. 
+```{r}
+trainingData <- read.table("pml-training.csv", header = TRUE, sep = ",", na.strings = c("NA", "", "#DIV/0!"))
+ValidationData <- read.table("pml-testing.csv", header = TRUE, sep = ",", na.strings = c("NA", "", "#DIV/0!"))
+```
+The total number of variables (including the outcome "classe") in the training and the testing set are `r ncol(trainingData)` and `r ncol(ValidationData)`, respectively. 
+The total number of observations in the training and testing data sets are `r nrow(trainingData)` and `r nrow(ValidationData)`, respectively. 
+
+The first column of both sets and the last column of the validation set are only the row number of the data which is removed in the following.  
+Also, the outcome variable is set aside for now to keep the two sets comparable for cleaning. 
+```{r}
+classe <- trainingData$classe
+trainingData <- subset(trainingData, select = c(-X, -classe))
+ValidationData <- subset(ValidationData, select = c(-X, -problem_id))
+```
+
+The training set includes several missing observations from different predictors which should be removed from both the training and testing data sets.
+In the following the variables that are more than 90% missing ("NA") are excluded. 
+Also, the data might include predictors with little variability. 
+This is handled using "nearZeroVar" command in the following:
+```{r}
+missPred <- sapply(trainingData, function(x) (sum(is.na(x))/length(x))>0.9) # missing predictors
+trainingData <- trainingData[, !as.vector(missPred)]
+ValidationData <- ValidationData[, !as.vector(missPred)]
+
+missPred <- sapply(ValidationData, function(x) (sum(is.na(x))/length(x))>0.9) # missing predictors
+ValidationData <- ValidationData[, !as.vector(missPred)]
+trainingData <- trainingData[, !as.vector(missPred)]
+
+nzv <- nearZeroVar(trainingData, saveMetrics = TRUE)
+trainingData <- trainingData[, !nzv$nzv]
+ValidationData <- ValidationData[, !nzv$nzv]
+```
+Overall, the above operations reduces the total number of predictors to `r ncol(trainingData)`. 
+The remaining predictors are:
+```{r}
+print(colnames(trainingData[, -ncol(trainingData)]))
+```
+
+## Model Building and Training 
+The original training data set itself is divided into training and testing sets. 
+For that purpose, 25% of the data is allocated for training:
+```{r}
+trainingData$classe <- classe
+inTrain = createDataPartition(trainingData$classe, p = 3/4, list = FALSE)
+training = trainingData[ inTrain,]
+testing = trainingData[-inTrain,]
+```
+Three different approaches are chosen to build the prediction model. 
+These are **Calssification Tree**, **Random Forest**, and **Boosting**. 
+Since the training process is computationally expensive, the recommendations presented [here](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md) are used to take advantage of all available processors in the computer. 
+```{r, cache=TRUE}
+set.seed(123)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+modFit_tree <- train(classe~., method = "rpart", data = training, trControl = fitControl)
+modFit_rf <- train(classe~., method = "rf", data = training, prox = FALSE, trControl = fitControl)
+modFit_boost <- train(classe~., method = "gbm", data = training, verbose = FALSE, trControl = fitControl)
+stopCluster(cluster)
+registerDoSEQ()
+```
+### Classification Tree 
+The following figure shows the decision tree from the performed classification tree method. 
+```{r}
+fancyRpartPlot(modFit_tree$finalModel)
+```
+
+A summary of the model parameters are presented in the following:
+```{r}
+print(modFit_tree)
+```
+Finally, the model accuracy is presented bellow:
+```{r}
+accuracy_tree <- confusionMatrix(testing$classe, predict(modFit_tree, testing))
+print(accuracy_tree)
+```
+### Random Forest
+A summary of the model parameters are presented in the following:
+```{r}
+print(modFit_rf)
+```
+The model accuracy is presented bellow:
+```{r}
+accuracy_rf <- confusionMatrix(testing$classe, predict(modFit_rf, testing))
+print(accuracy_rf)
+```
+### Boosting
+A summary of the model parameters are presented in the following:
+```{r}
+print(modFit_boost)
+```
+The model accuracy is presented bellow:
+```{r}
+accuracy_boost <- confusionMatrix(testing$classe, predict(modFit_boost, testing))
+print(accuracy_boost)
+```
+## Summary and Validation set Prediction
+Based on the results presented above, the accuracy of Classification Tree, Random Forest, and Boosting techniques are `r accuracy_tree$overall[1]`, `r accuracy_rf$overall[1]`, `r accuracy_boost$overall[1]`, respectively. 
+Thus, Random Forest technique shows to be more accurate and is used to predict the validation set as follows: 
+```{r}
+print(predict(modFit_rf, ValidationData))
+```
