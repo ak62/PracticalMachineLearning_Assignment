@@ -1,0 +1,10 @@
+base
+data.table
+ggplot2
+lattice
+caret
+ISLR
+rattle
+foreach
+iterators
+doParallel
